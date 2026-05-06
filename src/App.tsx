@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { nanoid } from 'nanoid';
 import Header from './components/Header';
 import AddExpenseModal from './components/AddExpenseModal';
 import type { IExpense } from './types/expense';
@@ -7,13 +8,35 @@ import CategoryFilter from './components/CategoryFilter';
 import StatsCards from './components/StatsCards';
 import ExpenseChart from './components/ExpenseChart';
 import TopCategories from './components/TopCategories';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, Timestamp } from "firebase/firestore";
-import { db } from "./firebase";
+
+const LOCAL_STORAGE_KEY = 'expense-flow-expenses';
 
 function App() {
 
   const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
-  const [expenses, setExpenses] = useState<IExpense[]>([]);
+  const [expenses, setExpenses] = useState<IExpense[]>(() => {
+    const savedExpenses = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!savedExpenses) {
+      return [];
+    }
+    try {
+      const parsedExpenses = JSON.parse(savedExpenses) as Array<{
+        id?: string;
+        title: string;
+        category: IExpense['category'];
+        amount: number | null;
+        date: string | null;
+      }>;
+
+      return parsedExpenses.map((expense) => ({
+        ...expense,
+        date: expense.date ? new Date(expense.date) : null,
+      }));
+    } catch (error) {
+      console.error('Failed to parse saved expenses', error);
+      return [];
+    }
+  });
   const [editedExpense, setEditedExpense] = useState<IExpense | null >(null);
   const [categoryFilter, setCatogoryFilter] = useState("all");
   const [currency, setCurrency] = useState<"USD" | "NGN" | "EUR">("USD");
@@ -27,39 +50,40 @@ function App() {
   const currencySymbol = currency === "USD" ? "$" : currency === "NGN" ? "₦" : "€";
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "expenses"), (snapshot) => {
-      const expensesData = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          date: data.date?.toDate() || new Date(),
-        } as IExpense;
-      });
-      setExpenses(expensesData);
-    });
-    return unsubscribe;
-  }, []);
+    localStorage.setItem(
+      LOCAL_STORAGE_KEY,
+      JSON.stringify(
+        expenses.map((expense) => ({
+          ...expense,
+          date: expense.date ? expense.date.toISOString() : null,
+        }))
+      )
+    );
+  }, [expenses]);
 
   const filteredExpenses = categoryFilter === "all" ? expenses : 
   expenses.filter((expense) => expense.category === categoryFilter)
 
-  const handleAddExpense = async (formData: IExpense) => {
-    const dataToSave = {
-      ...formData,
-      date: formData.date ? Timestamp.fromDate(formData.date) : Timestamp.now(),
-    };
-    if(editedExpense) {
-      await updateDoc(doc(db, "expenses", editedExpense.id!), dataToSave);
+  const handleAddExpense = (formData: IExpense) => {
+    if (editedExpense) {
+      setExpenses((prevExpenses) => 
+        prevExpenses.map((expense) =>
+          expense.id === editedExpense.id ? { ...expense, ...formData } : expense
+        )
+      );
     } else {
-      await addDoc(collection(db, "expenses"), dataToSave);
+      const newExpense: IExpense = {
+        ...formData,
+        id: nanoid(),
+      };
+      setExpenses((prevExpenses) => [newExpense, ...prevExpenses]);
     }
     setShowAddExpenseModal(false);
     setEditedExpense(null);
   };
 
-  const handleDeleteExpense = async (id: string) => {
-    await deleteDoc(doc(db, "expenses", id));
+  const handleDeleteExpense = (id: string) => {
+    setExpenses((prevExpenses) => prevExpenses.filter((expense) => expense.id !== id));
   };
 
 
